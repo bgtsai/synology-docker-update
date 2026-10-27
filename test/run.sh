@@ -16,9 +16,22 @@ if [ "$1" = run ]; then echo "${WT_OUT-Session done Failed=0 Scanned=1 Updated=1
 exit 0
 STUB
 chmod +x "$T/bin/docker"
+# 假的 synodsmnotify：照 DSM 7 的規矩檢查（收件者、代碼、內容要是 JSON 且只有 %CUSTOM_MSG%），
+# 記成「I:訊息」（資訊）或「E:訊息」（重大）；訊息去掉開頭的「Docker 更新 <名稱>：」，前綴另外檢查
 cat > "$T/bin/notify" <<'STUB'
-#!/bin/bash
-echo "$3" >> "$NOTES"
+#!/usr/bin/env python3
+import json, os, re, sys
+a = sys.argv[1:]
+out = open(os.environ['NOTES'], 'a', encoding='utf-8')
+try:
+    assert len(a) == 3 and a[0] == '@administrators', a
+    kind = {'DSMSupportFormCustomMessage': 'I', 'DSMSupportFormCustomFailure': 'E'}[a[1]]
+    d = json.loads(a[2]); assert list(d) == ['%CUSTOM_MSG%'], d
+    m = re.match(r'Docker 更新 (.+?)：(.*)$', d['%CUSTOM_MSG%'], re.S); assert m, d
+    out.write(kind + ':' + m.group(2) + '\n')
+    open(os.environ['NOTES'] + '.names', 'a', encoding='utf-8').write(m.group(1) + '\n')
+except Exception as e:
+    out.write('BAD:' + repr(e) + '\n')
 STUB
 chmod +x "$T/bin/notify"
 pass=0; fail=0
@@ -26,7 +39,7 @@ pass=0; fail=0
 case_() {
     local d="$T/volume1/docker/compose/$1"; mkdir -p "$d"
     sed "s#for p in /usr/local/bin/docker /usr/bin/docker#for p in $T/bin/docker#" "$ROOT/nas-update.sh" > "$d/nas-update.sh"
-    : > "$T/calls"; : > "$T/notes"
+    : > "$T/calls"; : > "$T/notes"; : > "$T/notes.names"
     if [ "$3" = - ]; then CALLS="$T/calls" NOTES="$T/notes" SYNONOTIFY="$T/bin/notify" NAMES="$2" bash "$d/nas-update.sh"
     else env CALLS="$T/calls" NOTES="$T/notes" SYNONOTIFY="$T/bin/notify" NAMES="$2" "$3" bash "$d/nas-update.sh"; fi
     local rc=$? log notes; log="$(cat "$d/nas-update.log")"; notes="$(paste -sd/ "$T/notes")"
@@ -46,12 +59,15 @@ case_ compose_a.b "11_a.b" - 0 "找到容器 11_a.b，" "--include-stopped 11_a.
 case_ compose_a.b "11_axb" - 1 "找不到符合「數字_a.b」" "ps -a --format"
 # 階段通知：第 7 格是 DSM 通知的完整順序
 S="開始執行更新，檢查容器中"; G="找到容器 11_calibre-web-foliate，開始抓取新映像（Watchtower）"; C=compose_calibre-web-foliate; K=11_calibre-web-foliate; P="$T/volume1/docker/compose/$C"
-case_ $C $K - 0 "已更新完成" "--include-stopped $K" "$S/$G/已更新完成：$K"
-case_ $C $K FRESH=1 0 "已更新完成" "--include-stopped $K" "$S/$G/已更新完成：$K"
-case_ $C $K FRESH=0 0 "下載最新腳本失敗" "--include-stopped $K" "下載最新腳本失敗，改用 NAS 上現有版本執行/$S/$G/已更新完成：$K"
-case_ $C $K "WT_OUT=Session done Failed=0 Scanned=1 Updated=0" 0 "已是最新版" "--include-stopped $K" "$S/$G/已是最新版，沒有變更：$K"
-case_ $C $K WT_RC=1 1 "容器可能沒有更新" "--include-stopped $K" "$S/$G/更新失敗（Watchtower 結束碼 1，Failed=0 Scanned=1 Updated=1） → 請看 $P/nas-update.log"
-case_ $C $K "WT_OUT=Session done Failed=1 Scanned=1 Updated=0" 1 "更新失敗" "--include-stopped $K" "$S/$G/更新失敗（Watchtower 結束碼 0，Failed=1 Scanned=1 Updated=0） → 請看 $P/nas-update.log"
-case_ $C $K "WT_OUT=pull access denied" 1 "更新失敗" "--include-stopped $K" "$S/$G/更新失敗（Watchtower 結束碼 0） → 請看 $P/nas-update.log"
-case_ $C 09_huginn - 1 "找不到符合" "ps -a --format" "$S/找不到符合「數字_calibre-web-foliate」的容器 → 請到 Container Manager「專案 → 新增」，路徑選 $P，用裡面的 compose.yaml 建立專案"
+case_ $C $K - 0 "已更新完成" "--include-stopped $K" "I:$S/I:$G/I:已更新完成：$K"
+case_ $C $K FRESH=1 0 "已更新完成" "--include-stopped $K" "I:$S/I:$G/I:已更新完成：$K"
+case_ $C $K FRESH=0 0 "下載最新腳本失敗" "--include-stopped $K" "I:下載最新腳本失敗，改用 NAS 上現有版本執行/I:$S/I:$G/I:已更新完成：$K"
+case_ $C $K "WT_OUT=Session done Failed=0 Scanned=1 Updated=0" 0 "已是最新版" "--include-stopped $K" "I:$S/I:$G/I:已是最新版，沒有變更：$K"
+case_ $C $K WT_RC=1 1 "容器可能沒有更新" "--include-stopped $K" "I:$S/I:$G/E:更新失敗（Watchtower 結束碼 1，Failed=0 Scanned=1 Updated=1） → 請看 $P/nas-update.log"
+case_ $C $K "WT_OUT=Session done Failed=1 Scanned=1 Updated=0" 1 "更新失敗" "--include-stopped $K" "I:$S/I:$G/E:更新失敗（Watchtower 結束碼 0，Failed=1 Scanned=1 Updated=0） → 請看 $P/nas-update.log"
+case_ $C $K "WT_OUT=pull access denied" 1 "更新失敗" "--include-stopped $K" "I:$S/I:$G/E:更新失敗（Watchtower 結束碼 0） → 請看 $P/nas-update.log"
+case_ $C 09_huginn - 1 "找不到符合" "ps -a --format" "I:$S/E:找不到符合「數字_calibre-web-foliate」的容器 → 請到 Container Manager「專案 → 新增」，路徑選 $P，用裡面的 compose.yaml 建立專案"
+# 名稱裡有 " 與 \：JSON 要跳脫，通知照樣送得出去（前綴名稱原樣還原）
+case_ 'compose_q"x\y' 09_huginn - 1 "找不到符合" "ps -a --format" 'I:開始執行更新，檢查容器中/E:找不到符合「數字_q"x\y」的容器 → 請到 Container Manager「專案 → 新增」，路徑選 '"$T"'/volume1/docker/compose/compose_q"x\y，用裡面的 compose.yaml 建立專案'
+if [ "$(sort -u "$T/notes.names")" = 'q"x\y' ]; then pass=$((pass+1)); echo "OK   通知開頭的容器名稱原樣還原"; else fail=$((fail+1)); echo "FAIL 通知開頭的容器名稱：$(sort -u "$T/notes.names")"; fi
 echo "通過 $pass，失敗 $fail"; [ "$fail" = 0 ]

@@ -15,13 +15,24 @@ exec > "$LOG" 2>&1                    # 排程沒有畫面，全部輸出寫進 
 echo "== $(TZ=Asia/Taipei date '+%F %T')"
 
 N="${SYNONOTIFY:-/usr/syno/bin/synodsmnotify}"   # 測試時換成假的指令
-info() {                              # 階段通知：log＋DSM 通知（有這個指令才送），不結束
-    echo "$1"
-    [ -x "$N" ] && "$N" @administrators "Docker 更新：$NAME" "$1"
+# DSM 7 的 synodsmnotify 不收自訂文字（標題要是系統郵件字串代碼、內容要是 JSON，否則報
+# "is neither mail string key nor i18n format"）。DSM 內建兩個整句都是 %CUSTOM_MSG% 的代碼，
+# 拿來送自訂文字：DSMSupportFormCustomMessage＝資訊、DSMSupportFormCustomFailure＝重大（紅）。
+# 類別固定顯示「系統」、沒有獨立標題，所以句子開頭帶容器名稱；系統會在句尾自動加「。」。
+# 2026-10-28 在 DSM 7.4.1 實測；這兩個代碼若被改版拿掉，log 會出現上面那句錯誤，更新本身不受影響。
+send() {                              # send <代碼> <訊息>
+    [ -x "$N" ] || return 0
+    local m="Docker 更新 $NAME：$2"
+    m="${m//\\/\\\\}"; m="${m//\"/\\\"}"   # JSON 字串跳脫：\ 與 "
+    "$N" @administrators "$1" "{\"%CUSTOM_MSG%\":\"$m\"}"
 }
-notify() {                            # 出錯：log＋DSM 通知＋失敗結束碼
+info() {                              # 階段通知：log＋DSM 通知（資訊），不結束
+    echo "$1"
+    send DSMSupportFormCustomMessage "$1"
+}
+notify() {                            # 出錯：log＋DSM 通知（重大）＋失敗結束碼
     echo "$1"; [ -n "$2" ] && echo "$2"; echo "${3:-沒有做任何變更}"
-    [ -x "$N" ] && "$N" @administrators "Docker 更新：$NAME" "$1 $2"
+    send DSMSupportFormCustomFailure "$1${2:+ $2}"
     exit 1
 }
 

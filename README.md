@@ -39,7 +39,7 @@ F=/volume1/docker/compose/compose_calibre-web-foliate/nas-update.sh; OK=0; curl 
 1. Downloads the latest `nas-update.sh` from GitHub and replaces the copy in the folder only if it really is the script (first line `#!/bin/bash`, valid syntax); if the download fails or looks wrong, the existing copy runs. The first run puts the script into the folder for you
 2. Finds the container: exactly one match → Watchtower updates it; nothing changes if it is already up to date
 3. Writes the result to `nas-update.log` in the same folder
-4. Sends a DSM notification at every stage: checking started → container found, pulling the new image → updated / already up to date; any error is notified too. If this run could not download the latest script (and ran the existing copy), an extra "download failed" notification comes first — this relies on `FRESH=$OK` in the command; older commands without it skip this check
+4. Sends a DSM notification at every stage: checking started → container found, pulling the new image → updated / already up to date; any error is notified too. If this run could not download the latest script (and ran the existing copy), an extra "download failed" notification comes first — this relies on `FRESH=$OK` in the command; older commands without it skip this check. Notifications appear in DSM's top-right Messages under the "System" category, starting with "Docker 更新 <name>："; stages are "Info", errors are "Critical" (red)
 
 ## When the container isn't found
 
