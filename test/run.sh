@@ -12,29 +12,46 @@ if [ "$1" = ps ]; then
     if [[ "$*" == *--format* ]]; then printf '%s\n' $NAMES
     else for n in $NAMES; do [[ "$*" == *"^$n\$"* ]] && echo id; done; fi
 fi
+if [ "$1" = run ]; then echo "${WT_OUT-Session done Failed=0 Scanned=1 Updated=1 notify=no}"; exit "${WT_RC:-0}"; fi
 exit 0
 STUB
 chmod +x "$T/bin/docker"
+cat > "$T/bin/notify" <<'STUB'
+#!/bin/bash
+echo "$3" >> "$NOTES"
+STUB
+chmod +x "$T/bin/notify"
 pass=0; fail=0
-# case <資料夾名稱> <現有容器（空白分隔）> <環境變數或 -> <預期結束碼> <預期 log 片段> <預期最後一個 docker 指令片段>
+# case <資料夾名稱> <現有容器（空白分隔）> <環境變數或 -> <預期結束碼> <預期 log 片段> <預期最後一個 docker 指令片段> [預期 DSM 通知，依序以 / 連接]
 case_() {
     local d="$T/volume1/docker/compose/$1"; mkdir -p "$d"
     sed "s#for p in /usr/local/bin/docker /usr/bin/docker#for p in $T/bin/docker#" "$ROOT/nas-update.sh" > "$d/nas-update.sh"
-    : > "$T/calls"
-    if [ "$3" = - ]; then CALLS="$T/calls" NAMES="$2" bash "$d/nas-update.sh"; else env CALLS="$T/calls" NAMES="$2" "$3" bash "$d/nas-update.sh"; fi
-    local rc=$? log; log="$(cat "$d/nas-update.log")"
-    if [ "$rc" = "$4" ] && [[ "$log" == *"$5"* ]] && [[ "$(tail -1 "$T/calls")" == *"$6"* ]]; then
+    : > "$T/calls"; : > "$T/notes"
+    if [ "$3" = - ]; then CALLS="$T/calls" NOTES="$T/notes" SYNONOTIFY="$T/bin/notify" NAMES="$2" bash "$d/nas-update.sh"
+    else env CALLS="$T/calls" NOTES="$T/notes" SYNONOTIFY="$T/bin/notify" NAMES="$2" "$3" bash "$d/nas-update.sh"; fi
+    local rc=$? log notes; log="$(cat "$d/nas-update.log")"; notes="$(paste -sd/ "$T/notes")"
+    if [ "$rc" = "$4" ] && [[ "$log" == *"$5"* ]] && [[ "$(tail -1 "$T/calls")" == *"$6"* ]] && [ "${7-$notes}" = "$notes" ]; then
         pass=$((pass+1)); echo "OK   $1 | $2 | $3"
     else
-        fail=$((fail+1)); echo "FAIL $1 | $2 | $3 → rc=$rc"; echo "$log" | sed 's/^/     /'; tail -1 "$T/calls" | sed 's/^/     最後指令：/'
+        fail=$((fail+1)); echo "FAIL $1 | $2 | $3 → rc=$rc"; echo "$log" | sed 's/^/     /'; tail -1 "$T/calls" | sed 's/^/     最後指令：/'; echo "     通知：$notes"
     fi
 }
-case_ compose_calibre-web-foliate "11_calibre-web-foliate 09_huginn" - 0 "Watchtower 更新" "--include-stopped 11_calibre-web-foliate"
+case_ compose_calibre-web-foliate "11_calibre-web-foliate 09_huginn" - 0 "找到容器 11_calibre-web-foliate，開始抓取" "--include-stopped 11_calibre-web-foliate"
 case_ compose_calibre-web-foliate "09_huginn"                        - 1 "找不到符合「數字_calibre-web-foliate」" "ps -a --format"
 case_ compose_calibre-web-foliate "11_calibre-web-foliate 12_calibre-web-foliate" - 1 "找到多個" "ps -a --format"
-case_ compose_calibre-web-foliate "11_calibre-web-foliate-old 11_calibre-web-foliate" - 0 "容器 11_calibre-web-foliate →" "--include-stopped 11_calibre-web-foliate"
-case_ compose_calibre-web-foliate "my-cwf"  CONTAINER=my-cwf 0 "容器 my-cwf →" "--include-stopped my-cwf"
+case_ compose_calibre-web-foliate "11_calibre-web-foliate-old 11_calibre-web-foliate" - 0 "找到容器 11_calibre-web-foliate，" "--include-stopped 11_calibre-web-foliate"
+case_ compose_calibre-web-foliate "my-cwf"  CONTAINER=my-cwf 0 "找到容器 my-cwf，" "--include-stopped my-cwf"
 case_ compose_calibre-web-foliate "09_huginn" CONTAINER=nope 1 "找不到容器 nope" "name=^nope$"
-case_ compose_a.b "11_a.b" - 0 "容器 11_a.b →" "--include-stopped 11_a.b"
+case_ compose_a.b "11_a.b" - 0 "找到容器 11_a.b，" "--include-stopped 11_a.b"
 case_ compose_a.b "11_axb" - 1 "找不到符合「數字_a.b」" "ps -a --format"
+# 階段通知：第 7 格是 DSM 通知的完整順序
+S="開始執行更新，檢查容器中"; G="找到容器 11_calibre-web-foliate，開始抓取新映像（Watchtower）"; C=compose_calibre-web-foliate; K=11_calibre-web-foliate; P="$T/volume1/docker/compose/$C"
+case_ $C $K - 0 "已更新完成" "--include-stopped $K" "$S/$G/已更新完成：$K"
+case_ $C $K FRESH=1 0 "已更新完成" "--include-stopped $K" "$S/$G/已更新完成：$K"
+case_ $C $K FRESH=0 0 "下載最新腳本失敗" "--include-stopped $K" "下載最新腳本失敗，改用 NAS 上現有版本執行/$S/$G/已更新完成：$K"
+case_ $C $K "WT_OUT=Session done Failed=0 Scanned=1 Updated=0" 0 "已是最新版" "--include-stopped $K" "$S/$G/已是最新版，沒有變更：$K"
+case_ $C $K WT_RC=1 1 "容器可能沒有更新" "--include-stopped $K" "$S/$G/更新失敗（Watchtower 結束碼 1，Failed=0 Scanned=1 Updated=1） → 請看 $P/nas-update.log"
+case_ $C $K "WT_OUT=Session done Failed=1 Scanned=1 Updated=0" 1 "更新失敗" "--include-stopped $K" "$S/$G/更新失敗（Watchtower 結束碼 0，Failed=1 Scanned=1 Updated=0） → 請看 $P/nas-update.log"
+case_ $C $K "WT_OUT=pull access denied" 1 "更新失敗" "--include-stopped $K" "$S/$G/更新失敗（Watchtower 結束碼 0） → 請看 $P/nas-update.log"
+case_ $C 09_huginn - 1 "找不到符合" "ps -a --format" "$S/找不到符合「數字_calibre-web-foliate」的容器 → 請到 Container Manager「專案 → 新增」，路徑選 $P，用裡面的 compose.yaml 建立專案"
 echo "通過 $pass，失敗 $fail"; [ "$fail" = 0 ]

@@ -22,13 +22,13 @@ DSM "Control Panel → Task Scheduler → Create → Scheduled Task → User-def
 - Task Settings: put only this line in the command box, replacing `<name>` with the container's name:
 
 ```
-F=/volume1/docker/compose/compose_<name>/nas-update.sh; curl -fsSL -o "$F.new" https://raw.githubusercontent.com/bgtsai/synology-docker-update/main/nas-update.sh && head -1 "$F.new" | grep -q '^#!/bin/bash' && bash -n "$F.new" && mv "$F.new" "$F"; rm -f "$F.new"; bash "$F"
+F=/volume1/docker/compose/compose_<name>/nas-update.sh; OK=0; curl -fsSL -o "$F.new" https://raw.githubusercontent.com/bgtsai/synology-docker-update/main/nas-update.sh && head -1 "$F.new" | grep -q '^#!/bin/bash' && bash -n "$F.new" && mv "$F.new" "$F" && OK=1; rm -f "$F.new"; FRESH=$OK bash "$F"
 ```
 
 For example, `11_calibre-web-foliate`:
 
 ```
-F=/volume1/docker/compose/compose_calibre-web-foliate/nas-update.sh; curl -fsSL -o "$F.new" https://raw.githubusercontent.com/bgtsai/synology-docker-update/main/nas-update.sh && head -1 "$F.new" | grep -q '^#!/bin/bash' && bash -n "$F.new" && mv "$F.new" "$F"; rm -f "$F.new"; bash "$F"
+F=/volume1/docker/compose/compose_calibre-web-foliate/nas-update.sh; OK=0; curl -fsSL -o "$F.new" https://raw.githubusercontent.com/bgtsai/synology-docker-update/main/nas-update.sh && head -1 "$F.new" | grep -q '^#!/bin/bash' && bash -n "$F.new" && mv "$F.new" "$F" && OK=1; rm -f "$F.new"; FRESH=$OK bash "$F"
 ```
 
 > [!IMPORTANT]
@@ -39,6 +39,7 @@ F=/volume1/docker/compose/compose_calibre-web-foliate/nas-update.sh; curl -fsSL 
 1. Downloads the latest `nas-update.sh` from GitHub and replaces the copy in the folder only if it really is the script (first line `#!/bin/bash`, valid syntax); if the download fails or looks wrong, the existing copy runs. The first run puts the script into the folder for you
 2. Finds the container: exactly one match → Watchtower updates it; nothing changes if it is already up to date
 3. Writes the result to `nas-update.log` in the same folder
+4. Sends a DSM notification at every stage: checking started → container found, pulling the new image → updated / already up to date; any error is notified too. If this run could not download the latest script (and ran the existing copy), an extra "download failed" notification comes first — this relies on `FRESH=$OK` in the command; older commands without it skip this check
 
 ## When the container isn't found
 

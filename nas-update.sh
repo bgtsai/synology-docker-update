@@ -4,6 +4,8 @@
 # 不會建立容器或專案：找不到就提示到 Container Manager 建立（指令列建的專案 Container Manager 不認得）。
 # 用法：排程指令欄放 README（https://github.com/bgtsai/synology-docker-update）裡那一行——每次先抓 GitHub 最新版、檢查過才替換再執行，抓不到就跑現有這份。
 # 不照命名規則的容器：在指令前指定 CONTAINER=實際名稱。設定不要改在這個檔案裡（下次會被最新版覆蓋）。
+# 排程指令會帶 FRESH=1（這次下載到最新版）或 FRESH=0（下載失敗，跑的是 NAS 上現有這份）；舊版指令不帶，就不判斷。
+# 每個階段都送 DSM 通知：開始 → 找到容器、開始抓映像 → 已更新／已是最新版；任何一步出錯也通知。
 
 DIR="${DIR:-$(cd "$(dirname "$0")" && pwd)}"
 LOG="${LOG:-$DIR/nas-update.log}"
@@ -12,12 +14,19 @@ NAME="$(basename "$DIR")"; NAME="${NAME#compose_}"
 exec > "$LOG" 2>&1                    # 排程沒有畫面，全部輸出寫進 log
 echo "== $(TZ=Asia/Taipei date '+%F %T')"
 
-notify() {                            # 結束前提示：log＋DSM 通知（有這個指令才送）＋失敗結束碼
-    echo "$1"; [ -n "$2" ] && echo "$2"; echo "沒有做任何變更"
-    N=/usr/syno/bin/synodsmnotify
+N="${SYNONOTIFY:-/usr/syno/bin/synodsmnotify}"   # 測試時換成假的指令
+info() {                              # 階段通知：log＋DSM 通知（有這個指令才送），不結束
+    echo "$1"
+    [ -x "$N" ] && "$N" @administrators "Docker 更新：$NAME" "$1"
+}
+notify() {                            # 出錯：log＋DSM 通知＋失敗結束碼
+    echo "$1"; [ -n "$2" ] && echo "$2"; echo "${3:-沒有做任何變更}"
     [ -x "$N" ] && "$N" @administrators "Docker 更新：$NAME" "$1 $2"
     exit 1
 }
+
+[ "${FRESH:-}" = 0 ] && info "下載最新腳本失敗，改用 NAS 上現有版本執行"
+info "開始執行更新，檢查容器中"
 
 DOCKER=""
 for p in /usr/local/bin/docker /usr/bin/docker; do [ -x "$p" ] && DOCKER="$p" && break; done
@@ -38,7 +47,20 @@ elif [ -z "$("$DOCKER" ps -a -q -f "name=^${CONTAINER}$")" ]; then
     notify "找不到容器 $CONTAINER" "→ 請到 Container Manager 用 ${DIR#/volume1} 的 compose.yaml 建立專案"
 fi
 
-echo "容器 $CONTAINER → Watchtower 更新"
+info "找到容器 $CONTAINER，開始抓取新映像（Watchtower）"
+OUT="$(mktemp)"; trap 'rm -f "$OUT"' EXIT
 "$DOCKER" run --rm -v /var/run/docker.sock:/var/run/docker.sock containrrr/watchtower \
-    --run-once --cleanup --include-stopped "$CONTAINER"
-rc=$?; echo "Watchtower 結束碼 $rc"; exit $rc
+    --run-once --cleanup --include-stopped "$CONTAINER" 2>&1 | tee "$OUT"
+rc=${PIPESTATUS[0]}; echo "Watchtower 結束碼 $rc"
+# 結果看 Watchtower 最後的摘要行：Session done Failed=0 Scanned=1 Updated=1 …
+SUM="$(grep -o 'Failed=[0-9]* Scanned=[0-9]* Updated=[0-9]*' "$OUT" | tail -1)"
+FAILED="$(echo "$SUM" | sed -n 's/.*Failed=\([0-9]*\).*/\1/p')"
+UPDATED="$(echo "$SUM" | sed -n 's/.*Updated=\([0-9]*\).*/\1/p')"
+if [ "$rc" != 0 ] || [ -z "$SUM" ] || [ "$FAILED" != 0 ]; then
+    notify "更新失敗（Watchtower 結束碼 $rc${SUM:+，$SUM}）" "→ 請看 ${LOG#/volume1}" "容器可能沒有更新"
+elif [ "$UPDATED" -gt 0 ]; then
+    info "已更新完成：$CONTAINER"
+else
+    info "已是最新版，沒有變更：$CONTAINER"
+fi
+exit 0

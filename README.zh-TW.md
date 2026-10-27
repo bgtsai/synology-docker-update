@@ -22,13 +22,13 @@ DSM「控制台 → 工作排程器 → 新增 → 排定的任務 → 使用者
 - 「任務設定」的指令欄只放這一行，把 `<名稱>` 換成那個容器的名稱：
 
 ```
-F=/volume1/docker/compose/compose_<名稱>/nas-update.sh; curl -fsSL -o "$F.new" https://raw.githubusercontent.com/bgtsai/synology-docker-update/main/nas-update.sh && head -1 "$F.new" | grep -q '^#!/bin/bash' && bash -n "$F.new" && mv "$F.new" "$F"; rm -f "$F.new"; bash "$F"
+F=/volume1/docker/compose/compose_<名稱>/nas-update.sh; OK=0; curl -fsSL -o "$F.new" https://raw.githubusercontent.com/bgtsai/synology-docker-update/main/nas-update.sh && head -1 "$F.new" | grep -q '^#!/bin/bash' && bash -n "$F.new" && mv "$F.new" "$F" && OK=1; rm -f "$F.new"; FRESH=$OK bash "$F"
 ```
 
 例如 `11_calibre-web-foliate`：
 
 ```
-F=/volume1/docker/compose/compose_calibre-web-foliate/nas-update.sh; curl -fsSL -o "$F.new" https://raw.githubusercontent.com/bgtsai/synology-docker-update/main/nas-update.sh && head -1 "$F.new" | grep -q '^#!/bin/bash' && bash -n "$F.new" && mv "$F.new" "$F"; rm -f "$F.new"; bash "$F"
+F=/volume1/docker/compose/compose_calibre-web-foliate/nas-update.sh; OK=0; curl -fsSL -o "$F.new" https://raw.githubusercontent.com/bgtsai/synology-docker-update/main/nas-update.sh && head -1 "$F.new" | grep -q '^#!/bin/bash' && bash -n "$F.new" && mv "$F.new" "$F" && OK=1; rm -f "$F.new"; FRESH=$OK bash "$F"
 ```
 
 > [!IMPORTANT]
@@ -39,6 +39,7 @@ F=/volume1/docker/compose/compose_calibre-web-foliate/nas-update.sh; curl -fsSL 
 1. 從 GitHub 下載最新版 `nas-update.sh`，確認是腳本（第一行 `#!/bin/bash`、語法正確）才替換資料夾裡那份；下載失敗或內容不對，就照跑現有那份。第一次執行會自動把腳本放進資料夾
 2. 找容器：剛好找到一個 → 交給 Watchtower 更新；已經是最新版就什麼都不動
 3. 結果寫在同資料夾的 `nas-update.log`
+4. 每個階段都送 DSM 通知：開始檢查 → 找到容器、開始抓新映像 → 已更新完成／已是最新版；任何一步出錯也通知。這次沒有下載到最新腳本（改跑現有那份）時，最前面多一則「下載最新腳本失敗」——這要靠指令裡的 `FRESH=$OK`，舊版指令（沒有這段）不會判斷
 
 ## 找不到容器時
 
